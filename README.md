@@ -1,11 +1,80 @@
 # tech-lead-reviewer-multi-agent
 
 An independent, read-only technical reviewer for design and planning work, dispatched
-at four gates and run on whichever model you choose — including one that isn't the
-model doing the work.
+at four gates and run on a model that didn't write the thing under review.
 
-The point is not more review. It's review by something that did not write the thing,
-does not share its assumptions, and has to cite evidence for every objection.
+## Quickstart
+
+**1. Add it to your project**
+
+```sh
+git submodule add https://github.com/dexmar/tech-lead-reviewer-multi-agent \
+    tools/tech-lead-reviewer
+```
+
+**2. Configure the reviewer** — this is the only place a model is ever named
+
+```sh
+cp tools/tech-lead-reviewer/.env.example .env
+```
+
+```sh
+TECH_LEAD_PROVIDER=codex          # needs the Codex CLI on PATH
+TECH_LEAD_MODEL=gpt-5.6-sol
+TECH_LEAD_EFFORT=max
+```
+
+**3. Generate** — writes into your repo, not the submodule
+
+```sh
+python3 tools/tech-lead-reviewer/bin/generate-adapters.py
+```
+
+**4. Tell your agent about it** — paste `.tech-lead/dispatch-instructions.md` into
+your `AGENTS.md` or `CLAUDE.md`. It's generated to match your config.
+
+**Run a gate:**
+
+```sh
+./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md
+```
+
+The review lands in `.review-log/` and prints to stdout. Gates are `1` approach,
+`2` design section, `3` spec, `4` plan.
+
+### Two optional extras
+
+```sh
+# A second, independent reviewer at gates 3 and 4, for comparison. Off by default.
+TECH_LEAD_SECOND_ENABLED=true
+TECH_LEAD_SECOND_MODEL=fable
+TECH_LEAD_SECOND_EFFORT=max
+```
+
+```sh
+# Checks specific to your subject matter, appended to the policy when present.
+cp tools/tech-lead-reviewer/reviewers/domain-checks.example.md .tech-lead/domain-checks.md
+```
+
+Wire `generate-adapters.py --check` into your build and a hand-edited generated file
+becomes a failing check.
+
+---
+
+## The one rule that matters
+
+**The agent proposes a review. It never runs one unprompted, and never re-dispatches
+on its own judgement.** After each review it presents every finding unaltered, and
+you decide what gets fixed and whether another round happens.
+
+This was learned the hard way. An automatic fix-and-re-review loop runs until the
+reviewer runs out of objections, which is not the same as the artifact being right —
+it starts manufacturing findings about work nobody has done yet, and spends real
+reasoning on prose instead of on something checkable against reality.
+
+The corollary: review is most valuable when a claim can be checked against something
+concrete. Reviewing a spec for unwritten code produces opinions. Reviewing one whose
+claims can be tested against real data produces bugs.
 
 ## Why a different model
 
@@ -31,115 +100,6 @@ Gate 4 deliberately does not re-open gates 1–3. If the spec says X, the plan m
 implement X; believing X is wrong is a gate 3 finding that should have surfaced
 earlier.
 
-## The user authorizes every round
-
-**The agent proposes a review. It does not run one unprompted, and it never
-re-dispatches on its own judgement.** After each review it presents every Critical and
-Important finding unaltered, says what it proposes to do about each, and the human
-decides what gets fixed and whether another round happens at all.
-
-This is the single most important thing in this repo, and it was learned the hard way.
-An automatic fix-and-re-review loop runs until the reviewer runs out of objections,
-which is not the same as the artifact being right. Left to itself it starts
-manufacturing findings about work nobody has done yet, and spends real reasoning on
-prose instead of on something that can be checked against reality.
-
-The corollary: review is most valuable when there's something concrete to check a
-claim against. Reviewing a spec that describes unwritten code produces opinions.
-Reviewing a spec whose claims can be tested against real data produces bugs.
-
-## Install
-
-Vendor it as a submodule, from your project's root:
-
-```sh
-git submodule add https://github.com/dexmar/tech-lead-reviewer-multi-agent \
-    tools/tech-lead-reviewer
-cp tools/tech-lead-reviewer/.env.example .env    # then edit
-python3 tools/tech-lead-reviewer/bin/generate-adapters.py
-```
-
-That writes into **your** repository, not into the submodule:
-
-```
-.tech-lead/codex-tech-lead.toml       generated adapters
-.tech-lead/claude-tech-lead.md
-.tech-lead/hermes-tech-lead.md
-.tech-lead/dispatch-instructions.md   paste into your AGENTS.md
-.claude/agents/tech-lead-reviewer.md  only when the second path is enabled
-```
-
-The tool distinguishes where it lives from the repository it is reviewing. Policy
-and templates are read from the submodule; `.env`, domain checks, artifacts,
-generated output and `.review-log/` all belong to your project. It finds your root
-with `git rev-parse`, handling the submodule case, and `TECH_LEAD_PROJECT_ROOT`
-overrides it.
-
-Paste `.tech-lead/dispatch-instructions.md` into your `AGENTS.md` (or `CLAUDE.md`,
-or whatever your harness reads). It is generated to match your configuration — with
-the second path off, it says nothing about a second reviewer.
-
-Requirements: `bash`, `python3`, `git`, and the [Codex
-CLI](https://github.com/openai/codex) on `PATH` for the primary path.
-
-### Pushing changes back
-
-Because it is a submodule, improvements travel:
-
-```sh
-cd tools/tech-lead-reviewer
-# edit reviewers/tech-lead-reviewer.md
-git commit -am "..." && git push
-cd ../.. && git add tools/tech-lead-reviewer && git commit -m "bump reviewer"
-```
-
-Two commits, and that separation is the point: a policy change cannot ride along
-inside a project commit.
-
-## Configure
-
-Everything lives in `.env`. Nothing else may pin a model — not an adapter, not a
-subagent file, not a dispatcher.
-
-```sh
-TECH_LEAD_PROVIDER=codex
-TECH_LEAD_MODEL=gpt-5.6-sol
-TECH_LEAD_EFFORT=max
-
-# Optional second opinion at gates 3 and 4. Off by default.
-TECH_LEAD_SECOND_ENABLED=false
-TECH_LEAD_SECOND_MODEL=fable
-TECH_LEAD_SECOND_EFFORT=max
-```
-
-The second path is opt-in on purpose: it costs a second review and needs a model your
-plan includes. With it off, no subagent adapter is generated and the dispatch
-instructions never mention a reviewer you can't run.
-
-## Run a gate
-
-```sh
-./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md
-./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md \
-    .review-log/gate3-codex-....md
-```
-
-The third argument passes the prior review back, so a re-review checks whether its own
-findings were addressed rather than re-deriving from scratch.
-
-Reviews land in `.review-log/`, named for the gate, path, artifact and timestamp. A
-review that exists only in a session transcript is lost to a restart, and the finding
-loop depends on the reviewer seeing what it already raised.
-
-## Domain checks
-
-The policy is domain-neutral. To add checks for your subject matter, copy
-`tools/tech-lead-reviewer/reviewers/domain-checks.example.md` to
-`.tech-lead/domain-checks.md` **in your project** — the dispatcher appends it under
-`## Project domain checks`, and the gates refer to it. When the file doesn't exist
-there are no domain checks, and the policy tells the reviewer their absence is not a
-finding.
-
 ## How it hangs together
 
 ```
@@ -163,6 +123,20 @@ reviewers/tech-lead-reviewer.md      .env
 Every adapter records the sha256 of the policy it came from.
 `generate-adapters.py --check` fails when one has drifted, so wire it into your
 verification command and hand-editing a generated file becomes a failing build.
+
+## Improving it
+
+Because it is a submodule, changes travel back:
+
+```sh
+cd tools/tech-lead-reviewer
+# edit reviewers/tech-lead-reviewer.md -- the canonical policy
+git commit -am "..." && git push
+cd ../.. && git add tools/tech-lead-reviewer && git commit -m "bump reviewer"
+```
+
+Two commits, and the separation is the point: a policy change cannot ride along
+inside a project commit.
 
 ## Verdict semantics
 
