@@ -1,5 +1,6 @@
 .env
 .review-log/
+.tech-lead/
 __pycache__/
 *.py[cod]
 .DS_Store

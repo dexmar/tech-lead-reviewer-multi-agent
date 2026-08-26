@@ -20,12 +20,18 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Final
 
+# Read from the tool.
 POLICY_PATH: Final = Path("reviewers/tech-lead-reviewer.md")
-DOMAIN_PATH: Final = Path("reviewers/domain-checks.md")
+
+# Written into the project. Everything generated lands under .tech-lead/ except the
+# harness subagent, which has to sit where the harness looks for it.
+OUTPUT_DIR: Final = Path(".tech-lead")
+SUBAGENT_PATH: Final = Path(".claude/agents/tech-lead-reviewer.md")
 
 TRUE_VALUES: Final = {"1", "true", "yes", "on"}
 
@@ -33,6 +39,30 @@ TRUE_VALUES: Final = {"1", "true", "yes", "on"}
 def env_flag(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     return default if raw is None else raw.strip().lower() in TRUE_VALUES
+
+
+def project_root(tool_root: Path) -> Path:
+    """The repository being reviewed, which is not always where this tool lives.
+
+    Vendored as a submodule, the tool sits inside somebody else's repository, and
+    everything it writes belongs to that repository rather than to itself.
+    """
+    override = os.environ.get("TECH_LEAD_PROJECT_ROOT", "").strip()
+    if override:
+        return Path(override).resolve()
+    for args in (
+        ["git", "rev-parse", "--show-superproject-working-tree"],
+        ["git", "rev-parse", "--show-toplevel"],
+    ):
+        try:
+            found = subprocess.run(
+                args, capture_output=True, text=True, check=False
+            ).stdout.strip()
+        except OSError:
+            found = ""
+        if found:
+            return Path(found).resolve()
+    return tool_root
 
 
 def load_env(root: Path) -> None:
@@ -56,7 +86,7 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
 
     out: dict[Path, bytes] = {}
 
-    out[Path("adapters/codex-tech-lead.toml")] = "\n".join(
+    out[OUTPUT_DIR / "codex-tech-lead.toml"] = "\n".join(
         [
             f"# {stamp}",
             'name = "tech_lead_reviewer"',
@@ -67,7 +97,7 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
         ]
     ).encode()
 
-    out[Path("adapters/claude-tech-lead.md")] = "\n".join(
+    out[OUTPUT_DIR / "claude-tech-lead.md"] = "\n".join(
         [
             "---",
             "name: tech-lead-reviewer",
@@ -81,7 +111,7 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
         ]
     ).encode()
 
-    out[Path("adapters/hermes-tech-lead.md")] = "\n".join(
+    out[OUTPUT_DIR / "hermes-tech-lead.md"] = "\n".join(
         [
             f"<!-- {stamp} -->",
             "# Hermes Tech Lead Invocation",
@@ -100,7 +130,7 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
     if second_enabled:
         # Pins the second path's identity. Hand-maintained equivalents drift; this
         # one is regenerated whenever the policy or the configured model changes.
-        out[Path("adapters/second-path-subagent.md")] = "\n".join(
+        out[SUBAGENT_PATH] = "\n".join(
             [
                 "---",
                 "name: tech-lead-reviewer",
@@ -116,9 +146,9 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
                 "",
                 "# Tech Lead Reviewer — second path",
                 "",
-                "Before doing anything else, read `adapters/claude-tech-lead.md` and",
-                "apply it in full as your policy. It is generated from the canonical",
-                "policy, and `generate-adapters.py --check` fails if the two",
+                "Before doing anything else, read `.tech-lead/claude-tech-lead.md`",
+                "and apply it in full as your policy. It is generated from the",
+                "canonical policy, and `generate-adapters.py --check` fails if the two",
                 "disagree. If that file is missing, stop and report it rather than",
                 "reviewing from memory of what the policy usually says.",
                 "",
@@ -136,7 +166,7 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
             ]
         ).encode()
 
-    out[Path("templates/dispatch-instructions.md")] = dispatch_text(
+    out[OUTPUT_DIR / "dispatch-instructions.md"] = dispatch_text(
         stamp, second_enabled=second_enabled
     ).encode()
     return out
@@ -235,13 +265,14 @@ def main(argv: list[str] | None = None) -> int:
         "--root",
         type=Path,
         default=Path(__file__).resolve().parents[1],
-        help="repository root",
+        help="the tool directory (where reviewers/ lives)",
     )
     parser.add_argument(
         "--check", action="store_true", help="fail on drift instead of writing"
     )
     args = parser.parse_args(argv)
-    root: Path = args.root.resolve()
+    tool_root: Path = args.root.resolve()
+    root = project_root(tool_root)
 
     load_env(root)
     second_enabled = env_flag("TECH_LEAD_SECOND_ENABLED")
@@ -255,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    policy_path = root / POLICY_PATH
+    policy_path = tool_root / POLICY_PATH
     if not policy_path.is_file():
         print(f"missing canonical policy: {policy_path}", file=sys.stderr)
         return 1
@@ -279,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # A disabled second path must not leave a stale subagent behind, or a project
     # that turned it off would still be told to dispatch a reviewer it cannot run.
-    stale = root / "adapters" / "second-path-subagent.md"
+    stale = root / SUBAGENT_PATH
     if not second_enabled and stale.is_file():
         if args.check:
             drifted.append(stale.relative_to(root))
@@ -293,8 +324,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not args.check:
-        state = f"enabled ({second_model}/{second_effort or 'max'})" if second_enabled else "disabled"
-        print(f"wrote {len(expected)} files; second path {state}")
+        state = (
+            f"enabled ({second_model}/{second_effort or 'max'})"
+            if second_enabled
+            else "disabled"
+        )
+        print(f"wrote {len(expected)} files into {root}; second path {state}")
     return 0
 
 

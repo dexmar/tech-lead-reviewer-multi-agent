@@ -50,21 +50,51 @@ Reviewing a spec whose claims can be tested against real data produces bugs.
 
 ## Install
 
-Copy the repository into your project, or vendor it as a subdirectory:
+Vendor it as a submodule, from your project's root:
 
 ```sh
-git clone https://github.com/dexmar/tech-lead-reviewer-multi-agent
-cd tech-lead-reviewer-multi-agent
-cp .env.example .env          # then edit
-python3 bin/generate-adapters.py
+git submodule add https://github.com/dexmar/tech-lead-reviewer-multi-agent \
+    tools/tech-lead-reviewer
+cp tools/tech-lead-reviewer/.env.example .env    # then edit
+python3 tools/tech-lead-reviewer/bin/generate-adapters.py
 ```
 
-Paste `templates/dispatch-instructions.md` into your project's `AGENTS.md` (or
-`CLAUDE.md`, or whatever your harness reads). It is generated to match your
-configuration — with the second path off, it says nothing about a second reviewer.
+That writes into **your** repository, not into the submodule:
+
+```
+.tech-lead/codex-tech-lead.toml       generated adapters
+.tech-lead/claude-tech-lead.md
+.tech-lead/hermes-tech-lead.md
+.tech-lead/dispatch-instructions.md   paste into your AGENTS.md
+.claude/agents/tech-lead-reviewer.md  only when the second path is enabled
+```
+
+The tool distinguishes where it lives from the repository it is reviewing. Policy
+and templates are read from the submodule; `.env`, domain checks, artifacts,
+generated output and `.review-log/` all belong to your project. It finds your root
+with `git rev-parse`, handling the submodule case, and `TECH_LEAD_PROJECT_ROOT`
+overrides it.
+
+Paste `.tech-lead/dispatch-instructions.md` into your `AGENTS.md` (or `CLAUDE.md`,
+or whatever your harness reads). It is generated to match your configuration — with
+the second path off, it says nothing about a second reviewer.
 
 Requirements: `bash`, `python3`, `git`, and the [Codex
 CLI](https://github.com/openai/codex) on `PATH` for the primary path.
+
+### Pushing changes back
+
+Because it is a submodule, improvements travel:
+
+```sh
+cd tools/tech-lead-reviewer
+# edit reviewers/tech-lead-reviewer.md
+git commit -am "..." && git push
+cd ../.. && git add tools/tech-lead-reviewer && git commit -m "bump reviewer"
+```
+
+Two commits, and that separation is the point: a policy change cannot ride along
+inside a project commit.
 
 ## Configure
 
@@ -89,8 +119,9 @@ instructions never mention a reviewer you can't run.
 ## Run a gate
 
 ```sh
-./bin/review-gate.sh 3 docs/specs/my-design.md
-./bin/review-gate.sh 3 docs/specs/my-design.md .review-log/gate3-codex-....md
+./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md
+./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md \
+    .review-log/gate3-codex-....md
 ```
 
 The third argument passes the prior review back, so a re-review checks whether its own
@@ -103,28 +134,34 @@ loop depends on the reviewer seeing what it already raised.
 ## Domain checks
 
 The policy is domain-neutral. To add checks for your subject matter, copy
-`reviewers/domain-checks.example.md` to `reviewers/domain-checks.md` — the dispatcher
-appends it under `## Project domain checks`, and the gates refer to it. When the file
-doesn't exist there are no domain checks, and the policy tells the reviewer their
-absence is not a finding.
+`tools/tech-lead-reviewer/reviewers/domain-checks.example.md` to
+`.tech-lead/domain-checks.md` **in your project** — the dispatcher appends it under
+`## Project domain checks`, and the gates refer to it. When the file doesn't exist
+there are no domain checks, and the policy tells the reviewer their absence is not a
+finding.
 
 ## How it hangs together
 
 ```
-reviewers/tech-lead-reviewer.md   canonical policy — the only thing you edit
-reviewers/domain-checks.md        yours, optional
-        │
-        │  bin/generate-adapters.py
-        ▼
-adapters/codex-tech-lead.toml     Codex developer instructions
-adapters/claude-tech-lead.md      Claude subagent policy
-adapters/hermes-tech-lead.md      Hermes invocation
-adapters/second-path-subagent.md  only when the second path is enabled
-templates/dispatch-instructions.md  paste into your AGENTS.md
+the tool (submodule)                 your project
+────────────────────                 ────────────
+reviewers/tech-lead-reviewer.md      .env
+   canonical policy, the only          the only place a model is named
+   file you edit                     .tech-lead/domain-checks.md
+        │                              yours, optional
+        │  bin/generate-adapters.py            │
+        └──────────────────────────────────────┤
+                                               ▼
+                              .tech-lead/codex-tech-lead.toml
+                              .tech-lead/claude-tech-lead.md
+                              .tech-lead/hermes-tech-lead.md
+                              .tech-lead/dispatch-instructions.md
+                              .claude/agents/tech-lead-reviewer.md
+                                 (second path only)
 ```
 
 Every adapter records the sha256 of the policy it came from.
-`bin/generate-adapters.py --check` fails when one has drifted, so wire it into your
+`generate-adapters.py --check` fails when one has drifted, so wire it into your
 verification command and hand-editing a generated file becomes a failing build.
 
 ## Verdict semantics
