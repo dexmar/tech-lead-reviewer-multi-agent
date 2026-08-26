@@ -79,7 +79,7 @@ def load_env(root: Path) -> None:
 
 
 def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
-           second_effort: str) -> dict[Path, bytes]:
+           second_effort: str, script_path: str) -> dict[Path, bytes]:
     digest = hashlib.sha256(policy_bytes).hexdigest()
     policy = policy_bytes.decode("utf-8")
     stamp = f"Generated from {POLICY_PATH}; canonical-sha256: {digest}"
@@ -167,12 +167,12 @@ def render(policy_bytes: bytes, *, second_enabled: bool, second_model: str,
         ).encode()
 
     out[OUTPUT_DIR / "dispatch-instructions.md"] = dispatch_text(
-        stamp, second_enabled=second_enabled
+        stamp, second_enabled=second_enabled, script_path=script_path
     ).encode()
     return out
 
 
-def dispatch_text(stamp: str, *, second_enabled: bool) -> str:
+def dispatch_text(stamp: str, *, second_enabled: bool, script_path: str) -> str:
     lines = [
         f"<!-- {stamp} -->",
         "# Tech Lead Review",
@@ -194,7 +194,7 @@ def dispatch_text(stamp: str, *, second_enabled: bool) -> str:
         "Run a gate with:",
         "",
         "```",
-        "./bin/review-gate.sh <gate> <artifact-path> [prior-findings-file]",
+        f"{script_path} <gate> <artifact-path> [prior-findings-file]",
         "```",
         "",
         "### The user authorizes every round",
@@ -291,11 +291,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"missing canonical policy: {policy_path}", file=sys.stderr)
         return 1
 
+    # The invocation path a consuming project actually types. Vendored as a
+    # submodule the script is not at ./bin/, and instructions that say it is send
+    # the reader to a file that does not exist.
+    script = tool_root / "bin" / "review-gate.sh"
+    try:
+        script_path = "./" + str(script.relative_to(root))
+    except ValueError:
+        script_path = str(script)
+
     expected = render(
         policy_path.read_bytes(),
         second_enabled=second_enabled,
         second_model=second_model,
         second_effort=second_effort or "max",
+        script_path=script_path,
     )
 
     drifted: list[Path] = []
