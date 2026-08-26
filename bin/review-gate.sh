@@ -50,12 +50,23 @@ esac
 [ -f "$POLICY" ] || die "policy not found: ${POLICY}"
 command -v codex >/dev/null 2>&1 || die "codex CLI not found on PATH"
 
-# Runtime identity comes from the environment file and nowhere else.
+# Runtime identity comes from the environment file -- except that a value already
+# exported wins, so a one-off run does not require editing the file. This matches
+# generate-adapters.py, which uses setdefault for the same reason. Sourcing with
+# `set -a` would overwrite the caller's environment instead, making the two tools
+# disagree and making a deliberate override look silently ignored.
 if [ -f "${PROJECT_ROOT}/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . "${PROJECT_ROOT}/.env"
-    set +a
+    while IFS='=' read -r raw_key raw_value || [ -n "$raw_key" ]; do
+        key="${raw_key#"${raw_key%%[![:space:]]*}"}"
+        key="${key%"${key##*[![:space:]]}"}"
+        case "$key" in
+            '' | '#'* | *[!A-Za-z0-9_]*) continue ;;
+        esac
+        [ -n "${!key:-}" ] && continue
+        value="${raw_value%\"}"; value="${value#\"}"
+        value="${value%\'}"; value="${value#\'}"
+        export "${key}=${value}"
+    done <"${PROJECT_ROOT}/.env"
 fi
 
 [ -n "${TECH_LEAD_PROVIDER:-}" ] || die "TECH_LEAD_PROVIDER is unset (see .env.example)"
