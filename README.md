@@ -33,14 +33,29 @@ python3 tools/tech-lead-reviewer/bin/generate-adapters.py
 **4. Tell your agent about it** — paste `.tech-lead/dispatch-instructions.md` into
 your `AGENTS.md` or `CLAUDE.md`. It's generated to match your config.
 
-**Run a gate:**
+**That's it.** From here your agent drives it. When it reaches a gate it stops and
+asks — *"the spec is ready, shall I run Gate 3?"* — runs the review on your yes,
+shows you every finding, and stops again until you say what to fix and whether
+another round runs.
+
+Your part is a yes or a no. The agent runs the script, dispatches the second
+reviewer if you enabled one, and files the results.
+
+<details>
+<summary>The command it runs, if you ever want to run one yourself</summary>
 
 ```sh
 ./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md
+
+# pass the previous review back so a re-review checks its own findings
+./tools/tech-lead-reviewer/bin/review-gate.sh 3 docs/specs/my-design.md \
+    .review-log/gate3-codex-....md
 ```
 
-The review lands in `.review-log/` and prints to stdout. Gates are `1` approach,
-`2` design section, `3` spec, `4` plan.
+Gates are `1` approach, `2` design section, `3` spec, `4` plan. The review prints
+to stdout and lands in `.review-log/`.
+
+</details>
 
 ### Two optional extras
 
