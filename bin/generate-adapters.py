@@ -50,18 +50,33 @@ def project_root(tool_root: Path) -> Path:
     override = os.environ.get("TECH_LEAD_PROJECT_ROOT", "").strip()
     if override:
         return Path(override).resolve()
+
     for args in (
         ["git", "rev-parse", "--show-superproject-working-tree"],
         ["git", "rev-parse", "--show-toplevel"],
     ):
         try:
-            found = subprocess.run(
-                args, capture_output=True, text=True, check=False
-            ).stdout.strip()
-        except OSError:
-            found = ""
-        if found:
-            return Path(found).resolve()
+            result = subprocess.run(args, capture_output=True, text=True, check=False)
+        except OSError as error:
+            raise SystemExit(f"cannot run git to locate the project root: {error}")
+
+        # A non-zero exit means git had something to say -- most often "dubious
+        # ownership" when a repository is bind-mounted into a container under a
+        # different uid. Falling back silently was the original behaviour, and it
+        # generated a full set of adapters into the tool's own directory while
+        # reporting success. Refuse instead: a wrong root that looks like a right
+        # one is worse than a stopped build.
+        if result.returncode != 0:
+            raise SystemExit(
+                "cannot determine the project root.\n"
+                f"  git said: {result.stderr.strip()}\n"
+                "  Fix the git complaint, or set TECH_LEAD_PROJECT_ROOT explicitly."
+            )
+        if result.stdout.strip():
+            return Path(result.stdout.strip()).resolve()
+
+    # Both succeeded and both were empty: not inside a repository at all, which is
+    # the standalone case. The tool is its own project.
     return tool_root
 
 
